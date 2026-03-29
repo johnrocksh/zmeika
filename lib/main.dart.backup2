@@ -1,0 +1,679 @@
+import 'dart:async';
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'storage_service.dart';
+
+void main() {
+  runApp(const SnakeGameApp());
+}
+
+class SnakeGameApp extends StatelessWidget {
+  const SnakeGameApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Змейка',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark().copyWith(
+        colorScheme: ColorScheme.dark(
+          primary: Colors.green,
+          secondary: Colors.lightGreen,
+        ),
+      ),
+      home: const SnakeGame(),
+    );
+  }
+}
+
+class SnakeGame extends StatefulWidget {
+  const SnakeGame({super.key});
+
+  @override
+  State<SnakeGame> createState() => _SnakeGameState();
+}
+
+class _SnakeGameState extends State<SnakeGame> with WidgetsBindingObserver {
+  static const int gridSize = 20;
+  static const int blockSize = 25;
+  
+  List<Point<int>> snake = [];
+  Point<int>? food;
+  Direction direction = Direction.right;
+  Direction nextDirection = Direction.right;
+  bool gameOver = false;
+  int score = 0;
+  Timer? gameTimer;
+  
+  // Статистика игры
+  int highScore = 0;
+  int totalGames = 0;
+  int totalWins = 0;
+  double averageScore = 0.0;
+  bool isLoadingStats = true;
+  bool isPaused = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadStats();
+    resetGame();
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // Если приложение свернуто - ставим на паузу
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (!gameOver && !isPaused) {
+        isPaused = true;
+        gameTimer?.cancel();
+        debugPrint('⏸️ Игра на паузе (приложение свернуто)');
+      }
+    } 
+    // Если приложение развернуто - возобновляем
+    else if (state == AppLifecycleState.resumed) {
+      if (isPaused && !gameOver) {
+        isPaused = false;
+        gameTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
+          updateGame();
+        });
+        debugPrint('▶️ Игра возобновлена');
+      }
+    }
+  }
+  
+  Future<void> _loadStats() async {
+    final stats = await GameStorageService.getStats();
+    setState(() {
+      highScore = stats['high_score'] as int;
+      totalGames = stats['total_games'] as int;
+      totalWins = stats['total_wins'] as int;
+      averageScore = stats['average_score'] as double;
+      isLoadingStats = false;
+    });
+    debugPrint('📊 Статистика загружена | Рекорд: $highScore | Игр: $totalGames');
+  }
+  
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    gameTimer?.cancel();
+    super.dispose();
+  }
+  
+  Future<void> resetGame() async {
+    // Сохраняем статистику предыдущей игры если она была закончена и это не было завершение через диалог
+    if (gameOver && score > 0) {
+      await _saveGameStats();
+    }
+    
+    setState(() {
+      snake = [
+        Point(gridSize ~/ 2, gridSize ~/ 2),
+        Point(gridSize ~/ 2 - 1, gridSize ~/ 2),
+        Point(gridSize ~/ 2 - 2, gridSize ~/ 2),
+      ];
+      direction = Direction.right;
+      nextDirection = Direction.right;
+      gameOver = false;
+      score = 0;
+      spawnFood();
+      
+      gameTimer?.cancel();
+      gameTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
+        updateGame();
+      });
+      
+      debugPrint('🎮 ИГРА ЗАПУЩЕНА | Направление: $direction');
+    });
+  }
+  
+  Future<void> _saveGameStats() async {
+    // Увеличиваем счетчик игр
+    await GameStorageService.incrementTotalGames();
+    
+    // Обновляем средний счёт
+    await GameStorageService.updateAverageScore(score);
+    
+    // Если набрали очки - это победа
+    if (score > 0) {
+      await GameStorageService.incrementTotalWins();
+    }
+    
+    // Проверяем рекорд
+    if (score > highScore) {
+      await GameStorageService.saveHighScore(score);
+      debugPrint('🏆 НОВЫЙ РЕКОРД! $score');
+    }
+    
+    // Загружаем обновлённую статистику
+    await _loadStats();
+  }
+  
+  void spawnFood() {
+    final random = Random();
+    bool validPosition = false;
+    
+    while (!validPosition) {
+      food = Point(
+        random.nextInt(gridSize),
+        random.nextInt(gridSize),
+      );
+      
+      validPosition = true;
+      for (var segment in snake) {
+        if (segment == food) {
+          validPosition = false;
+          break;
+        }
+      }
+    }
+    debugPrint('🍎 Еда создана: ${food?.x}, ${food?.y}');
+  }
+  
+  void updateGame() {
+    if (gameOver) return;
+    
+    setState(() {
+      direction = nextDirection;
+      
+      Point<int> head = snake.first;
+      Point<int> newHead;
+      
+      switch (direction) {
+        case Direction.up:
+          newHead = Point(head.x, head.y - 1);
+          break;
+        case Direction.down:
+          newHead = Point(head.x, head.y + 1);
+          break;
+        case Direction.left:
+          newHead = Point(head.x - 1, head.y);
+          break;
+        case Direction.right:
+          newHead = Point(head.x + 1, head.y);
+          break;
+      }
+      
+      debugPrint('🐍 Ход | Текущее направление: $direction | Новая голова: (${newHead.x}, ${newHead.y})');
+      
+      // Проверка столкновений
+      if (newHead.x < 0 || newHead.x >= gridSize ||
+          newHead.y < 0 || newHead.y >= gridSize ||
+          snake.contains(newHead)) {
+        gameOver = true;
+        gameTimer?.cancel();
+        debugPrint('💥 СТОЛКНОВЕНИЕ! Игра окончена | Счёт: $score');
+        return;
+      }
+      
+      snake.insert(0, newHead);
+      
+      // Проверка еды
+      if (newHead == food) {
+        score += 10;
+        debugPrint('✅ ЕДА СЪЕДЕНА! +10 очков | Счёт: $score');
+        spawnFood();
+      } else {
+        snake.removeLast();
+      }
+      
+      debugPrint('📏 Длина змейки: ${snake.length} | Позиция головы: (${snake.first.x}, ${snake.first.y})');
+    });
+  }
+  
+  void handleDirectionChange(Direction newDirection) {
+    debugPrint('👆 ВВОД | Запрошено направление: $newDirection | Текущее: $direction | Следующее: $nextDirection');
+    
+    // Запрещаем разворот на 180 градусов
+    bool canChange = false;
+    if (newDirection == Direction.up && direction != Direction.down) {
+      canChange = true;
+      debugPrint('✅ Разрешён поворот ВВЕРХ');
+    } else if (newDirection == Direction.down && direction != Direction.up) {
+      canChange = true;
+      debugPrint('✅ Разрешён поворот ВНИЗ');
+    } else if (newDirection == Direction.left && direction != Direction.right) {
+      canChange = true;
+      debugPrint('✅ Разрешён поворот ВЛЕВО');
+    } else if (newDirection == Direction.right && direction != Direction.left) {
+      canChange = true;
+      debugPrint('✅ Разрешён поворот ВПРАВО');
+    } else {
+      debugPrint('❌ ОТКЛОНЁНО! Нельзя развернуться на 180°');
+    }
+    
+    if (canChange) {
+      nextDirection = newDirection;
+      debugPrint('➡️ УСТАНОВЛЕНО следующее направление: $nextDirection');
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Змейка'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () async {
+            // Обработка кнопки "Назад" в AppBar
+            final shouldExit = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                backgroundColor: Colors.grey[850],
+                title: const Row(
+                  children: [
+                    Icon(Icons.exit_to_app, color: Colors.orange),
+                    SizedBox(width: 12),
+                    Text('Выйти?', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+                content: const Text(
+                  'Прогресс будет сохранён',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Отмена'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red[600],
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Выйти'),
+                  ),
+                ],
+              ),
+            );
+            
+            if (shouldExit == true && mounted) {
+              if (!gameOver && score > 0) {
+                await _saveGameStats();
+              }
+              Navigator.of(context).pop(true); // Выходим из экрана
+            }
+          },
+          tooltip: 'Выход',
+        ),
+        actions: [
+          // Кнопка рестарта
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => resetGame(),
+            tooltip: 'Рестарт',
+          ),
+        ],
+      ),
+      body: WillPopScope(
+        onWillPop: () async {
+          // Показываем диалог при попытке выхода через кнопку "Назад"
+          final shouldExit = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              backgroundColor: Colors.grey[850],
+              title: const Row(
+                children: [
+                  Icon(Icons.exit_to_app, color: Colors.orange),
+                  SizedBox(width: 12),
+                  Text('Выйти из игры?', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: const Text(
+                'Прогресс будет сохранён',
+                style: TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Отмена', style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[600],
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Выйти'),
+                ),
+              ],
+            ),
+          );
+          
+          if (shouldExit == true && mounted) {
+            if (!gameOver && score > 0) {
+              await _saveGameStats();
+            }
+            return true; // Разрешаем выход
+          }
+          return false; // Отменяем выход
+        },
+        child: Container(
+          color: Colors.grey[900],
+          child: Column(
+            children: [
+              // Компактная верхняя панель
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Счёт
+                    Expanded(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.star, color: Colors.amber, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            '$score',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Разделитель
+                    Container(
+                      width: 1,
+                      height: 30,
+                      color: Colors.grey[700],
+                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                    // Рекорд
+                    Expanded(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.emoji_events, color: Colors.amber[700], size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            '$highScore',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: isLoadingStats ? Colors.grey : Colors.amber[200],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Stack(
+                  children: [
+                    GestureDetector(
+                      onPanUpdate: (details) {
+                        if (gameOver || isPaused) {
+                          debugPrint('⚠️ Свайп отклонён - игра окончена или на паузе');
+                          return;
+                        }
+                      
+                        debugPrint('🖐️ СВАЙП ПОЛУЧЕН | dx: ${details.delta.dx.toStringAsFixed(1)}, dy: ${details.delta.dy.toStringAsFixed(1)}');
+                      
+                        if (details.delta.dx.abs() > details.delta.dy.abs()) {
+                          // Горизонтальный свайп
+                          if (details.delta.dx > 0) {
+                            debugPrint('➡️ Свайп вправо');
+                            handleDirectionChange(Direction.right);
+                          } else {
+                            debugPrint('⬅️ Свайп влево');
+                            handleDirectionChange(Direction.left);
+                          }
+                        } else {
+                          // Вертикальный свайп
+                          if (details.delta.dy > 0) {
+                            debugPrint('⬇️ Свайп вниз');
+                            handleDirectionChange(Direction.down);
+                          } else {
+                            debugPrint('⬆️ Свайп вверх');
+                            handleDirectionChange(Direction.up);
+                          }
+                        }
+                      },
+                      child: CustomPaint(
+                        size: Size(
+                          (gridSize * blockSize).toDouble(),
+                          (gridSize * blockSize).toDouble(),
+                        ),
+                        painter: SnakePainter(
+                          snake: snake,
+                          food: food,
+                          blockSize: blockSize,
+                          gameOver: gameOver,
+                        ),
+                      ),
+                    ),
+                    // Оверлей паузы
+                    if (isPaused)
+                      Container(
+                        color: Colors.black.withValues(alpha: 0.7),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.pause_circle_outline,
+                                size: 80,
+                                color: Colors.white.withValues(alpha: 0.8),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Пауза',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Приложение свернуто',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.white.withValues(alpha: 0.6),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Баннер "Игра завершена" внизу экрана
+                    if (gameOver)...[
+                      Positioned(
+                        bottom: 20,
+                left: 20,
+                right: 20,
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[900]?.withValues(alpha: 0.95),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        // Иконка и текст
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: Colors.blue[300],
+                                size: 22,
+                              ),
+                              const SizedBox(width: 12),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text(
+                                    'Игра завершена',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Счёт: $score',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blue[300],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Рекорд если есть
+                        if (score > highScore && score > 0) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            margin: const EdgeInsets.only(right: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.amber[900]?.withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.amber[700]!, width: 1),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.emoji_events, color: Colors.amber, size: 16),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '$highScore',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.amber[200],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        // Кнопка рестарта
+                        IconButton(
+                          onPressed: () => resetGame(),
+                          icon: const Icon(Icons.refresh),
+                          color: Colors.blue[300],
+                          tooltip: 'Ещё раз',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+  }
+}
+
+enum Direction { up, down, left, right }
+
+class SnakePainter extends CustomPainter {
+  final List<Point<int>> snake;
+  final Point<int>? food;
+  final int blockSize;
+  final bool gameOver;
+  
+  SnakePainter({
+    required this.snake,
+    this.food,
+    required this.blockSize,
+    required this.gameOver,
+  });
+  
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    
+    // Рисуем фон
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..color = Colors.grey[850]!,
+    );
+    
+    // Рисуем еду
+    if (food != null) {
+      paint.color = Colors.red;
+      canvas.drawRect(
+        Rect.fromLTWH(
+          food!.x * blockSize.toDouble(),
+          food!.y * blockSize.toDouble(),
+          blockSize - 2,
+          blockSize - 2,
+        ),
+        paint,
+      );
+    }
+    
+    // Рисуем змейку
+    for (int i = 0; i < snake.length; i++) {
+      if (i == 0) {
+        paint.color = Colors.lightGreen[400]!; // Голова
+      } else {
+        paint.color = Colors.green[400]!; // Тело
+      }
+      
+      canvas.drawRect(
+        Rect.fromLTWH(
+          snake[i].x * blockSize.toDouble(),
+          snake[i].y * blockSize.toDouble(),
+          blockSize - 2,
+          blockSize - 2,
+        ),
+        paint,
+      );
+    }
+    
+    if (gameOver) {
+      // Затемнение при проигрыше
+      paint.color = Colors.black.withValues(alpha: 0.5);
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        paint,
+      );
+    }
+  }
+  
+  @override
+  bool shouldRepaint(SnakePainter oldDelegate) => true;
+}

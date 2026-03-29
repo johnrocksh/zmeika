@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'storage_service.dart';
 import 'theme_service.dart';
-import 'classic_theme.dart';
+import 'game_theme.dart';
+import 'brawl_stars_theme.dart';
 
 void main() {
   runApp(const SnakeGameApp());
@@ -71,12 +72,14 @@ class _SnakeGameState extends State<SnakeGame> {
   int score = 0;
   Timer? gameTimer;
   
+  // Новая система тем
+  GameTheme _theme = BrawlStarsTheme();
+  int _frame = 0;
+  Timer? _animTimer;
+  
   // Статистика игры
   int highScore = 0;
   bool isLoadingStats = true;
-  
-  // Тема
-  bool isBrawlStarsTheme = true;
   
   @override
   void initState() {
@@ -84,20 +87,30 @@ class _SnakeGameState extends State<SnakeGame> {
     _loadTheme();
     _loadStats();
     resetGame();
-  }
-  
-  Future<void> _loadTheme() async {
-    final isBS = await ThemeService.isBrawlStarsTheme();
-    setState(() {
-      isBrawlStarsTheme = isBS;
+    
+    // Таймер анимации фона
+    _animTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (mounted) setState(() => _frame++);
     });
   }
   
-  Future<void> _toggleTheme() async {
-    final newTheme = await ThemeService.toggleTheme();
-    final isBS = newTheme == ThemeService.brawlStarsTheme;
+  Future<void> _loadTheme() async {
+    final theme = await ThemeService.getCurrentTheme();
     setState(() {
-      isBrawlStarsTheme = isBS;
+      _theme = theme;
+    });
+  }
+  
+  Future<void> _switchTheme() async {
+    final currentId = await ThemeService.getCurrentThemeId();
+    final allThemes = ThemeRegistry.all;
+    final currentIndex = allThemes.indexWhere((t) => t.id == currentId);
+    final nextIndex = (currentIndex + 1) % allThemes.length;
+    final nextTheme = allThemes[nextIndex];
+    
+    await ThemeService.setTheme(nextTheme.id);
+    setState(() {
+      _theme = nextTheme;
     });
   }
   
@@ -110,15 +123,6 @@ class _SnakeGameState extends State<SnakeGame> {
     debugPrint('📊 Статистика загружена | Рекорд: $highScore');
   }
   
-  Color get _snakeHeadColor => isBrawlStarsTheme ? BSColors.primary : ClassicColors.snakeHead;
-  Color get _snakeBodyColor => isBrawlStarsTheme ? BSColors.secondary : ClassicColors.snakeBody;
-  Color get _foodColor => isBrawlStarsTheme ? BSColors.secondary : ClassicColors.food;
-  Color get _backgroundColor => isBrawlStarsTheme ? BSColors.background : ClassicColors.background;
-  Color get _cardColor => isBrawlStarsTheme ? BSColors.card : ClassicColors.card;
-  Color get _textColor => isBrawlStarsTheme ? BSColors.text : ClassicColors.text;
-  Color get _primaryColor => isBrawlStarsTheme ? BSColors.primary : ClassicColors.snakeHead;
-  Color get _secondaryColor => isBrawlStarsTheme ? BSColors.secondary : ClassicColors.snakeHead;
-
   Future<void> _saveGameStats() async {
     if (score > 0) {
       await GameStorageService.saveHighScore(score);
@@ -126,9 +130,10 @@ class _SnakeGameState extends State<SnakeGame> {
     }
     await _loadStats();
   }
-
+  
   @override
   void dispose() {
+    _animTimer?.cancel();
     gameTimer?.cancel();
     super.dispose();
   }
@@ -265,13 +270,12 @@ class _SnakeGameState extends State<SnakeGame> {
       appBar: AppBar(
         title: Text(
           'ЗМЕЙКА',
-          style: GoogleFonts.lilitaOne(
+          style: _theme.titleStyle.copyWith(
             fontSize: 24,
-            color: BSColors.secondary,
             letterSpacing: 2,
           ),
         ),
-        backgroundColor: BSColors.card,
+        backgroundColor: _theme.backgroundColor,
         elevation: 0,
         leading: GestureDetector(
           onTap: () async {
@@ -281,35 +285,27 @@ class _SnakeGameState extends State<SnakeGame> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
-                backgroundColor: BSColors.card,
+                backgroundColor: _theme.cardColor,
                 title: Row(
                   children: [
-                    Icon(Icons.warning_amber_rounded, color: BSColors.primary),
+                    Icon(Icons.warning_amber_rounded, color: _theme.primaryColor),
                     const SizedBox(width: 12),
                     Text(
                       'ВЫЙТИ?',
-                      style: GoogleFonts.lilitaOne(
-                        fontSize: 18,
-                        color: BSColors.text,
-                      ),
+                      style: _theme.titleStyle.copyWith(fontSize: 18),
                     ),
                   ],
                 ),
                 content: Text(
                   'Прогресс будет сохранён',
-                  style: GoogleFonts.fredoka(
-                    fontSize: 14,
-                    color: BSColors.text.withValues(alpha: 0.7),
-                  ),
+                  style: _theme.scoreStyle.copyWith(fontSize: 14),
                 ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(false),
                     child: Text(
                       'ОТМЕНА',
-                      style: GoogleFonts.lilitaOne(
-                        color: BSColors.text.withValues(alpha: 0.7),
-                      ),
+                      style: _theme.labelStyle,
                     ),
                   ),
                   ElevatedButton(
@@ -351,23 +347,16 @@ class _SnakeGameState extends State<SnakeGame> {
         actions: [
           // Кнопка переключения темы
           GestureDetector(
-            onTap: _toggleTheme,
+            onTap: _switchTheme,
             child: Container(
               padding: const EdgeInsets.all(8),
               margin: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                gradient: isBrawlStarsTheme 
-                    ? LinearGradient(colors: [BSColors.primary, BSColors.secondary])
-                    : null,
-                color: !isBrawlStarsTheme ? ClassicColors.snakeHead : null,
+                color: _theme.primaryColor,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: isBrawlStarsTheme ? BSColors.border : ClassicColors.text, width: 2),
+                border: Border.all(color: _theme.borderColor, width: 2),
               ),
-              child: Icon(
-                isBrawlStarsTheme ? Icons.star : Icons.brightness_2,
-                color: Colors.white,
-                size: 20,
-              ),
+              child: Text(_theme.emoji, style: const TextStyle(fontSize: 18)),
             ),
           ),
           // Кнопка рестарта
@@ -377,9 +366,9 @@ class _SnakeGameState extends State<SnakeGame> {
               padding: const EdgeInsets.all(8),
               margin: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: isBrawlStarsTheme ? BSColors.secondary : ClassicColors.snakeHead,
+                color: _theme.secondaryColor,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: isBrawlStarsTheme ? BSColors.border : ClassicColors.text, width: 2),
+                border: Border.all(color: _theme.borderColor, width: 2),
               ),
               child: Icon(
                 Icons.refresh,
@@ -407,12 +396,12 @@ class _SnakeGameState extends State<SnakeGame> {
                       vertical: 12,
                     ),
                     decoration: BoxDecoration(
-                      color: BSColors.card,
-                      border: Border.all(color: BSColors.primary, width: 3),
+                      color: _theme.cardColor,
+                      border: Border.all(color: _theme.primaryColor, width: 3),
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: BSColors.primary.withValues(alpha: 0.3),
+                          color: _theme.primaryColor.withValues(alpha: 0.3),
                           blurRadius: 8,
                           spreadRadius: 2,
                         ),
@@ -422,26 +411,12 @@ class _SnakeGameState extends State<SnakeGame> {
                       children: [
                         Text(
                           'СЧЁТ',
-                          style: GoogleFonts.lilitaOne(
-                            fontSize: 14,
-                            color: BSColors.secondary,
-                            letterSpacing: 1.5,
-                          ),
+                          style: _theme.labelStyle.copyWith(fontSize: 14, letterSpacing: 1.5),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           '$score',
-                          style: GoogleFonts.lilitaOne(
-                            fontSize: 32,
-                            color: BSColors.text,
-                            shadows: [
-                              Shadow(
-                                color: BSColors.primary,
-                                offset: const Offset(0, -2),
-                                blurRadius: 8,
-                              ),
-                            ],
-                          ),
+                          style: _theme.scoreStyle.copyWith(fontSize: 32),
                         ),
                       ],
                     ),
@@ -453,12 +428,12 @@ class _SnakeGameState extends State<SnakeGame> {
                       vertical: 12,
                     ),
                     decoration: BoxDecoration(
-                      color: BSColors.card,
-                      border: Border.all(color: BSColors.secondary, width: 3),
+                      color: _theme.cardColor,
+                      border: Border.all(color: _theme.secondaryColor, width: 3),
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: BSColors.secondary.withValues(alpha: 0.3),
+                          color: _theme.secondaryColor.withValues(alpha: 0.3),
                           blurRadius: 8,
                           spreadRadius: 2,
                         ),
@@ -468,26 +443,12 @@ class _SnakeGameState extends State<SnakeGame> {
                       children: [
                         Text(
                           'РЕКОРД',
-                          style: GoogleFonts.lilitaOne(
-                            fontSize: 14,
-                            color: BSColors.primary,
-                            letterSpacing: 1.5,
-                          ),
+                          style: _theme.labelStyle.copyWith(fontSize: 14, letterSpacing: 1.5),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           '$highScore',
-                          style: GoogleFonts.lilitaOne(
-                            fontSize: 32,
-                            color: BSColors.secondary,
-                            shadows: [
-                              Shadow(
-                                color: BSColors.primary,
-                                offset: const Offset(0, -2),
-                                blurRadius: 8,
-                              ),
-                            ],
-                          ),
+                          style: _theme.scoreStyle.copyWith(fontSize: 32),
                         ),
                       ],
                     ),
@@ -527,16 +488,39 @@ class _SnakeGameState extends State<SnakeGame> {
                     }
                   }
                 },
-                child: CustomPaint(
-                  size: Size(
-                    (gridSize * blockSize).toDouble(),
-                    (gridSize * blockSize).toDouble(),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _theme.backgroundColor,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _theme.borderColor,
+                      width: 4,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _theme.primaryColor.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ],
                   ),
-                  painter: SnakePainter(
-                    snake: snake,
-                    food: food,
-                    blockSize: blockSize,
-                    gameOver: gameOver,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: CustomPaint(
+                      size: Size(
+                        (gridSize * blockSize).toDouble(),
+                        (gridSize * blockSize).toDouble(),
+                      ),
+                      painter: SnakePainter(
+                        snake: snake,
+                        food: food,
+                        blockSize: blockSize,
+                        gameOver: gameOver,
+                        theme: _theme,
+                        direction: direction.toSnake,
+                        frame: _frame,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -563,7 +547,7 @@ class _SnakeGameState extends State<SnakeGame> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.star, color: BSColors.secondary, size: 28),
+                    Icon(Icons.star, color: _theme.secondaryColor, size: 28),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -572,19 +556,15 @@ class _SnakeGameState extends State<SnakeGame> {
                         children: [
                           Text(
                             'ИГРА ЗАВЕРШЕНА',
-                            style: GoogleFonts.lilitaOne(
+                            style: _theme.labelStyle.copyWith(
                               fontSize: 14,
-                              color: BSColors.primary,
                               letterSpacing: 1.2,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             'Счёт: $score',
-                            style: GoogleFonts.lilitaOne(
-                              fontSize: 20,
-                              color: BSColors.text,
-                            ),
+                            style: _theme.scoreStyle.copyWith(fontSize: 20),
                           ),
                         ],
                       ),
@@ -597,25 +577,22 @@ class _SnakeGameState extends State<SnakeGame> {
                         ),
                         margin: const EdgeInsets.only(right: 12),
                         decoration: BoxDecoration(
-                          color: BSColors.primary,
+                          color: _theme.primaryColor,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: BSColors.border, width: 2),
+                          border: Border.all(color: _theme.borderColor, width: 2),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
                               Icons.emoji_events,
-                              color: BSColors.secondary,
+                              color: Colors.white,
                               size: 20,
                             ),
                             const SizedBox(width: 4),
                             Text(
                               '$highScore',
-                              style: GoogleFonts.lilitaOne(
-                                fontSize: 16,
-                                color: BSColors.text,
-                              ),
+                              style: _theme.scoreStyle.copyWith(fontSize: 16),
                             ),
                           ],
                         ),
@@ -628,18 +605,18 @@ class _SnakeGameState extends State<SnakeGame> {
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: BSColors.primary,
+                          color: _theme.primaryColor,
                           borderRadius: BorderRadius.circular(50),
                           border: Border(
                             bottom: BorderSide(
-                              color: BSColors.border,
+                              color: _theme.borderColor,
                               width: 4,
                             ),
                           ),
                         ),
                         child: Icon(
                           Icons.refresh,
-                          color: BSColors.text,
+                          color: Colors.white,
                           size: 24,
                         ),
                       ),
@@ -656,149 +633,56 @@ class _SnakeGameState extends State<SnakeGame> {
 
 enum Direction { up, down, left, right }
 
+extension DirectionExt on Direction {
+  SnakeDirection get toSnake {
+    switch (this) {
+      case Direction.up: return SnakeDirection.up;
+      case Direction.down: return SnakeDirection.down;
+      case Direction.left: return SnakeDirection.left;
+      case Direction.right: return SnakeDirection.right;
+    }
+  }
+}
+
 class SnakePainter extends CustomPainter {
   final List<Point<int>> snake;
   final Point<int>? food;
   final int blockSize;
   final bool gameOver;
+  final GameTheme theme;
+  final SnakeDirection direction;
+  final int frame;
 
-  SnakePainter({
+  const SnakePainter({
     required this.snake,
     this.food,
     required this.blockSize,
     required this.gameOver,
+    required this.theme,
+    required this.direction,
+    required this.frame,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint();
+    theme.paintBackground(canvas, size, frame);
 
-    // Рисуем фон в стиле Brawl Stars - тёмно-синий со звёздами
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = BSColors.background,
-    );
-
-    // Рисуем маленькие звёзды на фоне
-    _drawBackgroundStars(canvas, size, paint);
-
-    // Рисуем еду как звезду
     if (food != null) {
-      _drawStar(
-        canvas,
-        paint,
-        food!.x * blockSize.toDouble() + blockSize / 2,
-        food!.y * blockSize.toDouble() + blockSize / 2,
-        blockSize / 2 - 2,
-        BSColors.secondary,
-      );
+      theme.paintFood(canvas, food!, blockSize, frame);
     }
 
-    // Рисуем змейку
-    for (int i = 0; i < snake.length; i++) {
-      if (i == 0) {
-        paint.color = BSColors.primary; // Голова оранжевая
-      } else {
-        paint.color = BSColors.secondary; // Тело золотое
-      }
-
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
-            snake[i].x * blockSize.toDouble(),
-            snake[i].y * blockSize.toDouble(),
-            blockSize - 2,
-            blockSize - 2,
-          ),
-          const Radius.circular(6),
-        ),
-        paint,
-      );
-
-      // Рисуем глаза у головы
-      if (i == 0) {
-        _drawEyes(canvas, snake[i], blockSize, paint);
-      }
-    }
+    theme.paintSnake(canvas, snake, blockSize, direction, frame);
 
     if (gameOver) {
-      // Затемнение при проигрыше
-      paint.color = Colors.black.withValues(alpha: 0.5);
-      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
+      theme.paintGameOver(canvas, size);
     }
-  }
-
-  // Рисуем звёзды на фоне
-  void _drawBackgroundStars(Canvas canvas, Size size, Paint paint) {
-    paint.color = BSColors.secondary.withValues(alpha: 0.1);
-    final random = Random(42); // Фиксированный seed для постоянных звёзд
-
-    for (int i = 0; i < 50; i++) {
-      final x = random.nextDouble() * size.width;
-      final y = random.nextDouble() * size.height;
-      final radius = random.nextDouble() * 1.5 + 0.5;
-      canvas.drawCircle(Offset(x, y), radius, paint);
-    }
-  }
-
-  // Рисуем звезду (еду)
-  void _drawStar(
-    Canvas canvas,
-    Paint paint,
-    double cx,
-    double cy,
-    double radius,
-    Color color,
-  ) {
-    paint.color = color;
-    paint.style = PaintingStyle.fill;
-
-    final path = Path();
-    const points = 5;
-    final innerRadius = radius * 0.4;
-
-    for (int i = 0; i < points * 2; i++) {
-      final r = (i % 2 == 0) ? radius : innerRadius;
-      final angle = (i * pi / points) - pi / 2;
-      final x = cx + r * cos(angle);
-      final y = cy + r * sin(angle);
-
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-
-    path.close();
-    canvas.drawPath(path, paint);
-
-    // Добавляем блеск
-    paint.color = Colors.white.withValues(alpha: 0.3);
-    canvas.drawPath(path, paint);
-  }
-
-  // Рисуем глаза змее
-  void _drawEyes(Canvas canvas, Point<int> head, int blockSize, Paint paint) {
-    final x = head.x * blockSize.toDouble();
-    final y = head.y * blockSize.toDouble();
-    final eyeSize = blockSize / 5;
-    final pupilSize = eyeSize / 2;
-
-    // Белки глаз
-    paint.color = Colors.white;
-    final leftEye = Offset(x + blockSize / 3, y + blockSize / 3);
-    final rightEye = Offset(x + 2 * blockSize / 3, y + blockSize / 3);
-
-    canvas.drawCircle(leftEye, eyeSize, paint);
-    canvas.drawCircle(rightEye, eyeSize, paint);
-
-    // Зрачки
-    paint.color = Colors.black;
-    canvas.drawCircle(Offset(leftEye.dx, leftEye.dy), pupilSize, paint);
-    canvas.drawCircle(Offset(rightEye.dx, rightEye.dy), pupilSize, paint);
   }
 
   @override
-  bool shouldRepaint(SnakePainter oldDelegate) => true;
+  bool shouldRepaint(SnakePainter oldDelegate) =>
+      oldDelegate.frame != frame ||
+      oldDelegate.snake != snake ||
+      oldDelegate.food != food ||
+      oldDelegate.gameOver != gameOver ||
+      oldDelegate.theme.id != theme.id;
 }

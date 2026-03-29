@@ -1,49 +1,49 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'game_theme.dart';
+import 'brawl_stars_theme.dart';
+import 'starcraft_theme.dart';
+import 'ascii_theme.dart';
+import 'doom_theme.dart';
+import 'commander_theme.dart';
+import 'nfs_theme.dart';
 
-/// Сервис для управления темами/скинами
+/// Реестр всех тем — добавь новую тему сюда и она сразу появится везде
+class ThemeRegistry {
+  static final List<GameTheme> all = [
+    BrawlStarsTheme(),
+    StarCraftTheme(),
+    AsciiTheme(),
+    DoomTheme(),
+    CommanderTheme(),
+    NeedForSpeedTheme(),
+    // ClassicTheme(),      // ← добавь свою тему сюда
+  ];
+
+  static GameTheme getById(String id) {
+    return all.firstWhere(
+      (t) => t.id == id,
+      orElse: () => all.first,
+    );
+  }
+}
+
+/// Сервис управления выбранной темой (SharedPreferences)
 class ThemeService {
-  static const String _themeKey = 'selected_theme';
-  
-  // Доступные темы
-  static const String classicTheme = 'classic';
-  static const String brawlStarsTheme = 'brawl_stars';
-  
-  /// Получить текущую тему
-  static Future<String> getCurrentTheme() async {
+  static const String _key = 'selected_theme_v2';
+  static const String defaultThemeId = 'brawl_stars';
+
+  static Future<String> getCurrentThemeId() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_themeKey) ?? brawlStarsTheme;
+    return prefs.getString(_key) ?? defaultThemeId;
   }
-  
-  /// Установить тему
-  static Future<void> setTheme(String theme) async {
+
+  static Future<GameTheme> getCurrentTheme() async {
+    final id = await getCurrentThemeId();
+    return ThemeRegistry.getById(id);
+  }
+
+  static Future<void> setTheme(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_themeKey, theme);
-  }
-  
-  /// Переключить тему
-  static Future<String> toggleTheme() async {
-    final current = await getCurrentTheme();
-    final newTheme = current == classicTheme ? brawlStarsTheme : classicTheme;
-    await setTheme(newTheme);
-    return newTheme;
-  }
-  
-  /// Проверить, активна ли тема Brawl Stars
-  static Future<bool> isBrawlStarsTheme() async {
-    final theme = await getCurrentTheme();
-    return theme == brawlStarsTheme;
-  }
-  
-  /// Получить название текущей темы
-  static Future<String> getCurrentThemeName() async {
-    final theme = await getCurrentTheme();
-    switch (theme) {
-      case classicTheme:
-        return 'Классический';
-      case brawlStarsTheme:
-        return 'Brawl Stars';
-      default:
-        return 'Неизвестно';
-    }
+    await prefs.setString(_key, id);
   }
 }

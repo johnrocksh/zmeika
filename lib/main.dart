@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'storage_service.dart';
 
 void main() {
   runApp(const SnakeGameApp());
@@ -45,10 +45,30 @@ class _SnakeGameState extends State<SnakeGame> {
   int score = 0;
   Timer? gameTimer;
   
+  // Статистика игры
+  int highScore = 0;
+  int totalGames = 0;
+  int totalWins = 0;
+  double averageScore = 0.0;
+  bool isLoadingStats = true;
+  
   @override
   void initState() {
     super.initState();
+    _loadStats();
     resetGame();
+  }
+  
+  Future<void> _loadStats() async {
+    final stats = await GameStorageService.getStats();
+    setState(() {
+      highScore = stats['high_score'] as int;
+      totalGames = stats['total_games'] as int;
+      totalWins = stats['total_wins'] as int;
+      averageScore = stats['average_score'] as double;
+      isLoadingStats = false;
+    });
+    debugPrint('📊 Статистика загружена | Рекорд: $highScore | Игр: $totalGames');
   }
   
   @override
@@ -57,7 +77,12 @@ class _SnakeGameState extends State<SnakeGame> {
     super.dispose();
   }
   
-  void resetGame() {
+  Future<void> resetGame() async {
+    // Сохраняем статистику предыдущей игры если она была закончена
+    if (gameOver && score > 0) {
+      await _saveGameStats();
+    }
+    
     setState(() {
       snake = [
         Point(gridSize ~/ 2, gridSize ~/ 2),
@@ -77,6 +102,28 @@ class _SnakeGameState extends State<SnakeGame> {
       
       debugPrint('🎮 ИГРА ЗАПУЩЕНА | Направление: $direction');
     });
+  }
+  
+  Future<void> _saveGameStats() async {
+    // Увеличиваем счетчик игр
+    await GameStorageService.incrementTotalGames();
+    
+    // Обновляем средний счёт
+    await GameStorageService.updateAverageScore(score);
+    
+    // Если набрали очки - это победа
+    if (score > 0) {
+      await GameStorageService.incrementTotalWins();
+    }
+    
+    // Проверяем рекорд
+    if (score > highScore) {
+      await GameStorageService.saveHighScore(score);
+      debugPrint('🏆 НОВЫЙ РЕКОРД! $score');
+    }
+    
+    // Загружаем обновлённую статистику
+    await _loadStats();
   }
   
   void spawnFood() {
@@ -187,7 +234,7 @@ class _SnakeGameState extends State<SnakeGame> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: resetGame,
+            onPressed: () => resetGame(),
             tooltip: 'Рестарт',
           ),
         ],
@@ -196,15 +243,53 @@ class _SnakeGameState extends State<SnakeGame> {
         color: Colors.grey[900],
         child: Column(
           children: [
+            // Верхняя панель со счётом и рекордом
             Container(
               padding: const EdgeInsets.all(16),
-              child: Text(
-                'Счёт: $score',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  Column(
+                    children: [
+                      const Text(
+                        'Счёт',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$score',
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    children: [
+                      const Text(
+                        'Рекорд',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$highScore',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: isLoadingStats ? Colors.grey : Colors.amber,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
             Expanded(
@@ -252,31 +337,121 @@ class _SnakeGameState extends State<SnakeGame> {
               ),
             ),
             if (gameOver)
-              Container(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Игра окончена!',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red,
+              AnimatedOpacity(
+                opacity: gameOver ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  margin: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[850]?.withValues(alpha: 0.95),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        blurRadius: 10,
+                        spreadRadius: 2,
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    ElevatedButton.icon(
-                      onPressed: resetGame,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Играть снова'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Заголовок с иконкой
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: Colors.blue[300],
+                            size: 24,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Игра завершена',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      // Счёт
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.blue[700]!, Colors.blue[900]!],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.star, color: Colors.amber, size: 20),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Счёт: $score',
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      // Новый рекорд (если есть)
+                      if (score > highScore && score > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber[900]?.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber[700]!, width: 1),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.emoji_events, color: Colors.amber, size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Рекорд: $highScore',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber[200],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // Кнопка рестарта
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => resetGame(),
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('Ещё раз'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue[600],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
@@ -346,7 +521,7 @@ class SnakePainter extends CustomPainter {
     
     if (gameOver) {
       // Затемнение при проигрыше
-      paint.color = Colors.black.withOpacity(0.5);
+      paint.color = Colors.black.withValues(alpha: 0.5);
       canvas.drawRect(
         Rect.fromLTWH(0, 0, size.width, size.height),
         paint,
